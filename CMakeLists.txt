@@ -13,6 +13,6 @@ find_package(Threads REQUIRED)
 
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
-pybind11_add_module(augmentations_backend cpp/augmentations.cpp)
+pybind11_add_module(augmentations_backend cpp/augmentations.cpp cpp/transformations.cpp)
 target_link_libraries(augmentations_backend PUBLIC ${OpenCV_LIBS})
 target_link_libraries(augmentations_backend PUBLIC ${CMAKE_THREAD_LIBS_INIT})

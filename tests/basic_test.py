@@ -1,7 +1,8 @@
 import os
 import cv2
+import numpy as np
 
-from augmentations import Augmentations
+from augmentations import Augmentations, Flip
 
 
 def get_image_files(directory='tests/data'):
@@ -9,11 +10,16 @@ def get_image_files(directory='tests/data'):
 
 
 def test_image_loading():
-    augmentations = Augmentations(get_image_files(), {})
+    transformations_list = []
+    augmentations = Augmentations(get_image_files(), {}, transformations_list)
 
     image_count = 0
-    for image, image_file in zip(augmentations.epoch(), get_image_files()):
+    for i, (image, image_file) in enumerate(zip(augmentations.epoch(), get_image_files())):
         cv2_image = cv2.imread(image_file)
+        print(f'Image number {i}, shape: {cv2_image.shape}')
+
+        if cv2_image.shape != image.shape:
+            print(f'Expected shape: {cv2_image.shape}, actual shape: {image.shape}')
 
         assert cv2_image.shape == image.shape
         assert (cv2_image == image).all()
@@ -23,7 +29,30 @@ def test_image_loading():
     assert len(get_image_files()) == image_count
 
 
+def test_flip():
+    transformations_list = [Flip(1.0, True)]
+
+    augmentations = Augmentations(get_image_files(), {}, transformations_list)
+
+    image_count = 0
+    for i, (image, image_file) in enumerate(zip(augmentations.epoch(), get_image_files())):
+        cv2_image = cv2.imread(image_file)
+        flipped_image = np.fliplr(cv2_image)
+
+        if flipped_image.shape != image.shape:
+            print(f'Expected shape: {flipped_image.shape}, actual shape: {image.shape}')
+
+        assert flipped_image.shape == image.shape
+        assert (flipped_image == image).all()
+
+        image_count += 1
+
+    assert len(get_image_files()) == image_count
+
+
 if __name__ == "__main__":
     test_image_loading()
-
+    print('----------------------------------------------------------')
+    print('\n\n\n')
+    test_flip()
 

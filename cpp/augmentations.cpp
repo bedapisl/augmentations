@@ -1,21 +1,14 @@
-#include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
-#include <pybind11/stl.h>
+
 #include <thread>
 #include <cassert>
-#include <opencv2/core/core.hpp>
-#include <opencv2/imgcodecs.hpp> 
 #include <optional>
-#include <Python.h>
+
 
 #include "third_party/prettyprint.hpp"
+#include "header.hpp"
 
 
 namespace py = pybind11;
-
-using InputExample = std::tuple<std::vector<std::string>, std::vector<cv::Point2f>>;
-using Example = std::tuple<std::vector<cv::Mat>, std::vector<cv::Point2f>>;
-using OutputExample = std::tuple<std::vector<py::handle>, std::vector<cv::Point2f>>;
 
 
 void check_example(const Example& example) {
@@ -50,10 +43,9 @@ OutputExample example_to_output_example(const Example& example) {
     }
 
     return {output_arrays, std::get<1>(example)};
-
 }
 
-Example process_example(const InputExample& input_example, py::dict config) {
+Example load_example(const InputExample& input_example) {
     std::vector<cv::Mat> output_images;
 
     for (const std::string& image_path : std::get<0>(input_example)) {
@@ -75,13 +67,14 @@ void thread_job(int thread_number,
                 int thread_count,
                 const std::vector<InputExample>& input_examples,
                 std::vector<std::optional<Example>>& processed_examples,
-                py::dict config) {
+                const std::vector<std::shared_ptr<Transformation>>& transformations) {
     
     std::cout << "Starting thread" << std::endl;
     int input_index = thread_number;
 
     while (input_index < input_examples.size()) {
-        Example processed_example = process_example(input_examples[input_index], config);
+        Example example = load_example(input_examples[input_index]);
+        apply_transformations(example, transformations);
 
         int output_index = input_index % processed_examples.size();
         while (processed_examples[output_index].has_value()) {
@@ -89,7 +82,7 @@ void thread_job(int thread_number,
             sleep(0.0);
         }
 
-        processed_examples[output_index] = processed_example;  // I am 99% sure here is not a race condition :)
+        processed_examples[output_index] = example;  // I am 99% sure here is not a race condition :)
         input_index += thread_count;
     }
     std::cout << "Ending thread" << std::endl;
@@ -98,15 +91,23 @@ void thread_job(int thread_number,
 
 class AugmentationsBackend {
 public:
-    AugmentationsBackend(const std::vector<InputExample>& input_examples, py::dict config)
+    AugmentationsBackend(const std::vector<InputExample>& input_examples, const py::dict& config, const py::list& transformations_list)
         : input_examples(input_examples),
           config(config),
-          num_threads(1),
-          processed_examples(2)
+          num_threads(config["num_threads"].cast<int>()),
+          processed_examples(config["output_queue_size"].cast<int>())
     {
         std::cout << "Input examples size: " << input_examples.size() << std::endl;
-        assert (processed_examples.size() >= num_threads);
-        assert (num_threads > 0);
+
+        if (processed_examples.size() < num_threads) throw_exception("Output queue size must be higher than number of threads");
+        if (num_threads <= 0) throw_exception("Need at least oen thread");
+        if (processed_examples.size() % num_threads != 0) throw_exception("Output queue size must be divisible by number of threads");
+
+        for (const py::handle& item : transformations_list) {
+            std::cout << "Converting transformation" << std::endl;
+            std::shared_ptr<Transformation> transformation = item.cast<std::shared_ptr<Transformation>>();
+            transformations.push_back(transformation);
+        } 
     }
 
     std::optional<OutputExample> get_example() {
@@ -133,7 +134,7 @@ public:
         std::cout << "C++: Starting epoch" << std::endl;
 
         for(int i=0; i<num_threads; ++i) {
-            std::thread t(thread_job, i, num_threads, std::cref(input_examples), std::ref(processed_examples), config);
+            std::thread t(thread_job, i, num_threads, std::cref(input_examples), std::ref(processed_examples), transformations);
             t.detach();
         }
     }
@@ -141,6 +142,7 @@ public:
 
 private:
     py::dict config;
+    std::vector<std::shared_ptr<Transformation>> transformations;
     std::vector<InputExample> input_examples;
     int num_threads;
     int input_index;
@@ -155,7 +157,25 @@ PYBIND11_MODULE(augmentations_backend, m) {
     PyEval_InitThreads();
 
     py::class_<AugmentationsBackend>(m, "AugmentationsBackend")
-        .def(py::init<const std::vector<InputExample>&, py::dict>())
+        .def(py::init<const std::vector<InputExample>&, const py::dict&, const py::list&>())
         .def("start_epoch", &AugmentationsBackend::start_epoch)
         .def("get_example", &AugmentationsBackend::get_example);
+
+    py::class_<Transformation, std::shared_ptr<Transformation>>(m, "Transformation")
+        .def(py::init<double, bool>());
+
+    py::class_<Flip, Transformation, std::shared_ptr<Flip>>(m, "Flip")
+        .def(py::init<double, bool>());
+
+    py::class_<Crop, Transformation, std::shared_ptr<Crop>>(m, "Crop")
+        .def(py::init<double, double>());
+
+    py::class_<Rotate, Transformation, std::shared_ptr<Rotate>>(m, "Rotate")
+        .def(py::init<double, double, double>());
+
+    py::class_<BrightnessContrast, Transformation, std::shared_ptr<BrightnessContrast>>(m, "BrightnessContrast")
+        .def(py::init<double, int, int, double, double>());
+
+    py::class_<HueSaturation, Transformation, std::shared_ptr<HueSaturation>>(m, "HueSaturation")
+        .def(py::init<double, int, int, int, int>());
 };

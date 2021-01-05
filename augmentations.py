@@ -1,12 +1,19 @@
 from typing import Dict, List
 import time
 
+from augmentations_backend import AugmentationsBackend, Flip
 
-from augmentations_backend import AugmentationsBackend
+__all__ = [Flip]
 
 
 class Augmentations:
-    def __init__(self, images: List, config: Dict, input_type='image'):
+    def __init__(self, images: List, config: Dict, augmentations_list: List, input_type='image'):
+        config['num_threads'] = 2
+        config['output_queue_size'] = 5
+
+        if config['output_queue_size'] % config['num_threads'] > 0:
+            config['output_queue_size'] += config['num_threads'] - (config['output_queue_size'] % config['num_threads'])
+
         self.input_type = input_type
 
         # convert data to format acceptable by backend
@@ -19,7 +26,7 @@ class Augmentations:
         elif input_type == 'images_points':
             converted_images = images
 
-        self.backend = AugmentationsBackend(converted_images, config)
+        self.backend = AugmentationsBackend(converted_images, config, augmentations_list)
 
 
     def convert_back(self, example):
