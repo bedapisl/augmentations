@@ -42,12 +42,16 @@ OutputExample example_to_output_example(const Example& example) {
         output_arrays.push_back(image_to_py_array(image));
     }
 
-    return {output_arrays, std::get<1>(example)};
+    std::vector<std::tuple<float, float>> points;
+    for (const cv::Point2f& point : std::get<1>(example)) {
+        points.push_back({point.x, point.y});
+    }
+
+    return {output_arrays, points};
 }
 
 Example load_example(const InputExample& input_example) {
     std::vector<cv::Mat> output_images;
-
     for (const std::string& image_path : std::get<0>(input_example)) {
         std::cout << "Loading image from " << image_path << std::endl;
         cv::Mat image = cv::imread(image_path, cv::IMREAD_COLOR);
@@ -59,7 +63,12 @@ Example load_example(const InputExample& input_example) {
         output_images.push_back(image);
     }
 
-    return {output_images, std::get<1>(input_example)};
+    std::vector<cv::Point2f> points;
+    for (const std::tuple<float, float>& point : std::get<1>(input_example)) {
+        points.push_back({std::get<0>(point), std::get<1>(point)});
+    }
+
+    return {output_images, points};
 }
 
 
@@ -178,4 +187,10 @@ PYBIND11_MODULE(augmentations_backend, m) {
 
     py::class_<HueSaturation, Transformation, std::shared_ptr<HueSaturation>>(m, "HueSaturation")
         .def(py::init<double, int, int, int, int>());
+
+    py::class_<Resize, Transformation, std::shared_ptr<Resize>>(m, "Resize")
+        .def(py::init<int, int>());
+
+    py::class_<BGR2RGB, Transformation, std::shared_ptr<BGR2RGB>>(m, "BGR2RGB")
+        .def(py::init<>());
 };

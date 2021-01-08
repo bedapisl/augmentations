@@ -11,10 +11,11 @@ def get_image_files(directory='tests/data'):
 
 def test_image_loading():
     transformations_list = []
-    augmentations = Augmentations(get_image_files(), {}, transformations_list)
+    augmentations = Augmentations(get_image_files(), transformations_list, batch_size=1)
 
     image_count = 0
-    for i, (image, image_file) in enumerate(zip(augmentations.epoch(), get_image_files())):
+    for i, (batch, image_file) in enumerate(zip(augmentations.epoch(), get_image_files())):
+        image = batch[0]
         cv2_image = cv2.imread(image_file)
         print(f'Image number {i}, shape: {cv2_image.shape}')
 
@@ -32,10 +33,11 @@ def test_image_loading():
 def test_flip():
     transformations_list = [Flip(1.0, True)]
 
-    augmentations = Augmentations(get_image_files(), {}, transformations_list)
+    augmentations = Augmentations(get_image_files(), transformations_list, batch_size=1)
 
     image_count = 0
-    for i, (image, image_file) in enumerate(zip(augmentations.epoch(), get_image_files())):
+    for i, (batch, image_file) in enumerate(zip(augmentations.epoch(), get_image_files())):
+        image = batch[0]
         cv2_image = cv2.imread(image_file)
         flipped_image = np.fliplr(cv2_image)
 

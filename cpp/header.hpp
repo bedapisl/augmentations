@@ -12,9 +12,9 @@
 namespace py = pybind11;
 
 
-using InputExample = std::tuple<std::vector<std::string>, std::vector<cv::Point2f>>;
+using InputExample = std::tuple<std::vector<std::string>, std::vector<std::tuple<float, float>>>;
 using Example = std::tuple<std::vector<cv::Mat>, std::vector<cv::Point2f>>;
-using OutputExample = std::tuple<std::vector<py::handle>, std::vector<cv::Point2f>>;
+using OutputExample = std::tuple<std::vector<py::handle>, std::vector<std::tuple<float, float>>>;
 
 
 #define throw_exception(msg) throw std::runtime_error(msg + std::string("\n") + __FILE__ + std::string(":") + std::to_string(__LINE__))
@@ -143,6 +143,7 @@ public:
         cv::Point result;
         result.x = rotation_matrix.at<double>(0,0)*point.x + rotation_matrix.at<double>(0,1)*point.y + rotation_matrix.at<double>(0,2);
         result.y = rotation_matrix.at<double>(1,0)*point.x + rotation_matrix.at<double>(1,1)*point.y + rotation_matrix.at<double>(1,2);
+        return result;
     }
 
     void setup(const Example& example) {
@@ -211,4 +212,40 @@ public:
 private:
     int hue, hue_low, hue_high;
     int saturation, saturation_low, saturation_high;
+};
+
+class Resize : public Transformation {
+public:
+    Resize(int height, int width) : Transformation(1.0, false), width(width), height(height) { }
+
+    void transform_image(cv::Mat& image, cv::Mat& result) {
+        cv::resize(image, result, cv::Size(width, height));
+    }
+
+    cv::Point2f transform_point(const cv::Point2f& point) {
+        return {point.x * x_scale, point.y * y_scale};
+    }
+
+    void setup(const Example& example) {
+        int image_width = std::get<0>(example)[0].cols;
+        int image_height = std::get<0>(example)[0].rows;
+
+        x_scale = float(width) / float(image_width);
+        y_scale = float(height) / float(image_height);
+    }
+
+private:
+    int height, width;
+    float x_scale;
+    float y_scale;
+};
+
+
+class BGR2RGB : public Transformation {
+public:
+    BGR2RGB() : Transformation(1.0, false) { }
+
+    void transform_image(cv::Mat& image, cv::Mat& result) {
+        cv::cvtColor(image, result, cv::COLOR_BGR2RGB);
+    }
 };
