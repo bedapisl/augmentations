@@ -43,9 +43,9 @@ class Augmentations:
             converted_images = images
         elif input_type == 'image_boxes':
             converted_images = [([image_path], boxes_to_points(boxes)) for image_path, boxes in images]
+        else:
+            raise ValueError(f"input_type '{input_type}' is invalid")
 
-        import pdb
-        pdb.set_trace()
         self.backend = AugmentationsBackend(converted_images, config, augmentations_list)
 
 
@@ -59,6 +59,8 @@ class Augmentations:
         elif self.input_type == 'image_points':
             converted_example = (example[0][0], example[1])
         elif self.input_type == 'images_points':
+            converted_example = example
+        elif self.input_type == 'image_boxes':
             converted_example = (example[0][0], points_to_boxes(example[1]))
        
         return converted_example    

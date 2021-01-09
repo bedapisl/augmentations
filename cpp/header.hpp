@@ -46,9 +46,8 @@ public:
                 }
             }
 
-            std::vector<cv::Point2f> points = std::get<1>(example);
-            for (size_t i=0; i<points.size(); ++i) {
-                points[i] = transform_point(points[i]);
+            for (cv::Point2f& point : std::get<1>(example)) {
+                point = transform_point(point);
             }
         }
     }
@@ -103,7 +102,7 @@ public:
      }
 
     void transform_image(cv::Mat& image) {
-        image = image(cv::Rect(top, left, bottom, right));
+        image = image(cv::Rect(left, top, right - left, bottom - top));
     }
 
     cv::Point2f transform_point(const cv::Point2f& point) {
@@ -223,7 +222,10 @@ public:
     }
 
     cv::Point2f transform_point(const cv::Point2f& point) {
-        return {point.x * x_scale, point.y * y_scale};
+        std::cout << "Original point: " << point.x << "," << point.y << std::endl;
+        cv::Point2f new_point = {point.x * x_scale, point.y * y_scale};
+        std::cout << "New point: " << new_point.x << "," << new_point.y << std::endl;
+        return new_point;
     }
 
     void setup(const Example& example) {
