@@ -1,8 +1,7 @@
-
 #include <thread>
 #include <cassert>
 #include <optional>
-
+#include <atomic>
 
 #include "third_party/prettyprint.hpp"
 #include "header.hpp"
@@ -24,7 +23,7 @@ void check_example(const Example& example) {
 }
 
 
-py::handle image_to_py_array(const cv::Mat& image) {
+py::array image_to_py_array(const cv::Mat& image) {
     // IMPORTANT: Need to acquire the GIL before touching Python internals :) 
     // Reference: https://pybind11.readthedocs.io/en/stable/advanced/misc.html#global-interpreter-lock-gil
     py::gil_scoped_acquire acquire;
@@ -33,11 +32,11 @@ py::handle image_to_py_array(const cv::Mat& image) {
         {image.size().width * 3, 3, 1},
         image.data);
 
-    return result.release();
+    return result;
 }
 
 OutputExample example_to_output_example(const Example& example) {
-    std::vector<py::handle> output_arrays;
+    std::vector<py::array> output_arrays;
     for (const cv::Mat& image : std::get<0>(example)) {
         output_arrays.push_back(image_to_py_array(image));
     }
@@ -53,7 +52,6 @@ OutputExample example_to_output_example(const Example& example) {
 Example load_example(const InputExample& input_example) {
     std::vector<cv::Mat> output_images;
     for (const std::string& image_path : std::get<0>(input_example)) {
-        std::cout << "Loading image from " << image_path << std::endl;
         cv::Mat image = cv::imread(image_path, cv::IMREAD_COLOR);
 
         if (image.empty()) {
@@ -71,12 +69,17 @@ Example load_example(const InputExample& input_example) {
     return {output_images, points};
 }
 
-
+//Processes examples with indices: thread_number, thread_number + thread_count, thread_number + 2*thread_count, ...
+//
+//Reads example from input_examples, process it, wait until right position in processed_examples is empty (NULL),
+//then write the example there.
+//
+//Main function of worker threads.
 void thread_job(int thread_number,
                 int thread_count,
                 const std::vector<InputExample>& input_examples,
-                std::vector<std::optional<Example>>& processed_examples,
-                const std::vector<std::shared_ptr<Transformation>>& transformations) {
+                std::vector<std::atomic<Example*>>& processed_examples,
+                std::vector<std::shared_ptr<Transformation>> transformations) {
     
     std::cout << "Starting thread" << std::endl;
     int input_index = thread_number;
@@ -86,64 +89,94 @@ void thread_job(int thread_number,
         apply_transformations(example, transformations);
 
         int output_index = input_index % processed_examples.size();
-        while (processed_examples[output_index].has_value()) {
-            //std::cout << "Worker: Waiting for processed_examples[" << output_index << "]" << std::endl;
+        while (processed_examples[output_index] != nullptr) {
             sleep(0.0);
         }
 
-        processed_examples[output_index] = example;  // I am 99% sure here is not a race condition :)
+        processed_examples[output_index] = new Example(example);
         input_index += thread_count;
     }
     std::cout << "Ending thread" << std::endl;
 }
 
-
+//Class for computing augmentations in parallel.
+//
+//processed_examples array is used for synchronization between workers and the main thread
+//    - each worker thread is writing only at specific positions in processed_examples
+//        - these positions are different for each thread -> threads cannot have race condition
+//    - NULL at processed_examples[i] means example i is not ready, and worker can write example there
+//    - Other value means example is ready, main thread can read it and set the pointer to NULL
 class AugmentationsBackend {
 public:
-    AugmentationsBackend(const std::vector<InputExample>& input_examples, const py::dict& config, const py::list& transformations_list)
+    AugmentationsBackend(const std::vector<InputExample>& input_examples, const py::dict& config, const py::list& transformations_list, int seed)
         : input_examples(input_examples),
           config(config),
           num_threads(config["num_threads"].cast<int>()),
           processed_examples(config["output_queue_size"].cast<int>())
     {
+        srand(seed);
         std::cout << "Input examples size: " << input_examples.size() << std::endl;
 
         if (processed_examples.size() < num_threads) throw_exception("Output queue size must be higher than number of threads");
-        if (num_threads <= 0) throw_exception("Need at least oen thread");
+        if (num_threads <= 0) throw_exception("Need at least one thread");
         if (processed_examples.size() % num_threads != 0) throw_exception("Output queue size must be divisible by number of threads");
 
         for (const py::handle& item : transformations_list) {
             std::cout << "Converting transformation" << std::endl;
             std::shared_ptr<Transformation> transformation = item.cast<std::shared_ptr<Transformation>>();
             transformations.push_back(transformation);
-        } 
+        }
+        input_index = 0;
+    }
+
+    // Only for testing
+    std::optional<OutputExample> simple_get_example() {
+        std::cout << input_index << std::endl;
+        Example example = load_example(input_examples[input_index]);
+        return example_to_output_example(example);
     }
 
     std::optional<OutputExample> get_example() {
         if (input_index >= input_examples.size())
             return {};  // end of epoch
 
-        int output_index = input_index % processed_examples.size();
+        try {
+            int output_index = input_index % processed_examples.size();
 
-        while (!processed_examples[output_index].has_value()) {
-            //std::cout << "Main thread: Waiting for processed_examples[" << output_index << "]" << std::endl;
-            sleep(0.0);
+            while (processed_examples[output_index] == nullptr) {
+                //std::cout << "Main thread: Waiting for processed_examples[" << output_index << "]" << std::endl;
+                sleep(0.0);
+            }
+
+            Example example(*processed_examples[output_index]);
+
+            delete processed_examples[output_index];
+            processed_examples[output_index] = nullptr;
+
+            input_index++;
+            return example_to_output_example(example);
+        } catch(const std::exception& e) {
+            std::cout << "Exception caught!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
+            std::cout << e.what();
+            std::cout << "input_index == " << input_index << std::endl;
+            return {};
         }
-
-        Example example = processed_examples[output_index].value();
-        processed_examples[output_index].reset();
-
-        input_index++;
-        return example_to_output_example(example);
     }
 
     void start_epoch() {
         input_index = 0;
 
         std::cout << "C++: Starting epoch" << std::endl;
-
+        
         for(int i=0; i<num_threads; ++i) {
-            std::thread t(thread_job, i, num_threads, std::cref(input_examples), std::ref(processed_examples), transformations);
+            
+            std::vector<std::shared_ptr<Transformation>> thread_transformations;
+            for (std::shared_ptr<Transformation> t : transformations) {
+                std::shared_ptr<Transformation> transformation_copy = t->clone();
+                thread_transformations.push_back(transformation_copy);
+            }
+
+            std::thread t(thread_job, i, num_threads, std::cref(input_examples), std::ref(processed_examples), thread_transformations);
             t.detach();
         }
     }
@@ -156,7 +189,7 @@ private:
     int num_threads;
     int input_index;
 
-    std::vector<std::optional<Example>> processed_examples;
+    std::vector<std::atomic<Example*>> processed_examples;
 };
 
 
@@ -166,9 +199,10 @@ PYBIND11_MODULE(augmentations_backend, m) {
     PyEval_InitThreads();
 
     py::class_<AugmentationsBackend>(m, "AugmentationsBackend")
-        .def(py::init<const std::vector<InputExample>&, const py::dict&, const py::list&>())
+        .def(py::init<const std::vector<InputExample>&, const py::dict&, const py::list&, int>())
         .def("start_epoch", &AugmentationsBackend::start_epoch)
-        .def("get_example", &AugmentationsBackend::get_example);
+        .def("get_example", &AugmentationsBackend::get_example, py::return_value_policy::take_ownership)
+        .def("simple_get_example", &AugmentationsBackend::simple_get_example, py::return_value_policy::take_ownership);
 
     py::class_<Transformation, std::shared_ptr<Transformation>>(m, "Transformation")
         .def(py::init<double, bool>());

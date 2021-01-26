@@ -13,11 +13,11 @@ def boxes_to_points(boxes: List[Tuple[Tuple[float, float]]]):
 
 
 def points_to_boxes(points: List[Tuple[float, float]]):
-    return zip(points[0::2], points[1::2])
+    return zip(points[0::4], points[1::4], points[2::4], points[3::4])
 
 
 class Augmentations:
-    def __init__(self, images: List, augmentations_list: List, num_threads: int=2, output_queue_size: int=5, batch_size: int=64, input_type='image'):
+    def __init__(self, images: List, augmentations_list: List, num_threads: int=4, output_queue_size: int=5, batch_size: int=64, input_type='image', seed=0):
         config = {}
         config['num_threads'] = num_threads
         config['output_queue_size'] = output_queue_size
@@ -25,7 +25,7 @@ class Augmentations:
 
         assert batch_size > 0
 
-        if config['output_queue_size'] % config['num_threads'] > 0:
+        if config['num_threads'] > 0 and config['output_queue_size'] % config['num_threads'] > 0:
             config['output_queue_size'] += config['num_threads'] - (config['output_queue_size'] % config['num_threads'])
 
         self.input_type = input_type
@@ -46,7 +46,7 @@ class Augmentations:
         else:
             raise ValueError(f"input_type '{input_type}' is invalid")
 
-        self.backend = AugmentationsBackend(converted_images, config, augmentations_list)
+        self.backend = AugmentationsBackend(converted_images, config, augmentations_list, seed)
 
 
     def convert_back(self, example):
@@ -63,7 +63,7 @@ class Augmentations:
         elif self.input_type == 'image_boxes':
             converted_example = (example[0][0], points_to_boxes(example[1]))
        
-        return converted_example    
+        return converted_example
 
 
     def epoch(self):
@@ -77,7 +77,7 @@ class Augmentations:
         batch = []
         
         while example:
-            print('Python: example processed')
+            #print('Python: example processed')
             batch.append(self.convert_back(example))
 
             if len(batch) == self.batch_size:

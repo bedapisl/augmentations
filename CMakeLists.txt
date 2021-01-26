@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 2.8.12)
 project(augmentations_backend)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O0 -ggdb")
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(pybind11)
 
